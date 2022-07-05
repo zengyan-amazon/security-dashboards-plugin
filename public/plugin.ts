@@ -43,6 +43,7 @@ import {
   SecurityPluginStart,
 } from './types';
 import { addTenantToShareURL } from './services/shared-link';
+import { fetchCurrentTenant } from './apps/configuration/utils/tenant-utils';
 
 async function hasApiPermission(core: CoreSetup): Promise<boolean | undefined> {
   try {
@@ -168,6 +169,29 @@ export class SecurityPlugin implements Plugin<SecurityPluginSetup, SecurityPlugi
         },
       });
     }
+    // intercept http to add name space into API
+    // core.http.intercept(
+    //   {
+    //     request: async (fetchOptions, controller) => {
+    //       console.log(fetchOptions.path);
+    //       if (fetchOptions.path.startsWith('/api/saved_objects/')) {
+    //         let tenant = await fetchCurrentTenant(core.http);
+    //         if (tenant === '') {
+    //           tenant = 'default';
+    //         } else if (tenant === '__user__') {
+    //           tenant = 'private'; // dummy need to capture user info and set here
+    //         }
+    //         let newFetchOptions = {};
+    //         newFetchOptions = {
+    //           ...fetchOptions,
+    //           path: `/s/${tenant}${fetchOptions.path}`,
+    //         }
+    //         return newFetchOptions;
+    //       }
+    //       return fetchOptions;
+    //     }
+    //   }
+    // );
 
     if (config.multitenancy.enabled) {
       addTenantToShareURL(core);
