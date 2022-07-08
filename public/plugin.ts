@@ -43,7 +43,6 @@ import {
   SecurityPluginStart,
 } from './types';
 import { addTenantToShareURL } from './services/shared-link';
-import { fetchCurrentTenant } from './apps/configuration/utils/tenant-utils';
 
 async function hasApiPermission(core: CoreSetup): Promise<boolean | undefined> {
   try {
