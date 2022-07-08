@@ -31,7 +31,7 @@ export class SecuritySavedObjectsClientWrapper {
       {};
     // console.log(`State: ${JSON.stringify(state)}`);
     const authInfo = state.authInfo!;
-    const username = `user/${authInfo?.user_name || 'annonymous'}`;
+    const username = `user/${authInfo?.user_name || 'user/annonymous'}`;
     const roles = authInfo?.roles?.map((value) => `role/${value}`) || [];
     const accessibleIdentities = [username, ...roles];
 
@@ -42,6 +42,9 @@ export class SecuritySavedObjectsClientWrapper {
     ) => {
       options!.can_access = { ro_identities: [], rw_identities: [] };
       options!.can_access!.rw_identities!.push(...accessibleIdentities);
+      if (type === 'config') {
+        options!.can_access!.rw_identities!.push('*');
+      }
       return await wrapperOptions.client.create(type, attributes, options);
     };
 
