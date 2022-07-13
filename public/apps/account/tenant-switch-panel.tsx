@@ -34,6 +34,7 @@ import { keys } from 'lodash';
 import React from 'react';
 import { ClientConfigType } from '../../types';
 import {
+  fetchCurrentTenant,
   RESOLVED_GLOBAL_TENANT,
   RESOLVED_PRIVATE_TENANT,
   resolveTenantName,
@@ -48,6 +49,7 @@ interface TenantSwitchPanelProps {
   handleClose: () => void;
   handleSwitchAndClose: () => void;
   config: ClientConfigType;
+  tenant: string;
 }
 
 const GLOBAL_TENANT_KEY_NAME = 'global_tenant';
@@ -81,6 +83,7 @@ export function TenantSwitchPanel(props: TenantSwitchPanelProps) {
     const fetchData = async () => {
       try {
         const accountInfo = await fetchAccountInfo(props.coreStart.http);
+        // const currentTenant = await fetchCurrentTenant(props.coreStart.http);
         const tenantsInfo = accountInfo.data.tenants || {};
         setTenants(keys(tenantsInfo));
 
@@ -88,7 +91,8 @@ export function TenantSwitchPanel(props: TenantSwitchPanelProps) {
         setUsername(currentUserName);
 
         // @ts-ignore
-        const currentRawTenantName = accountInfo.data.user_requested_tenant;
+        // const currentRawTenantName = accountInfo.data.user_requested_tenant;
+        const currentRawTenantName = props.tenant;
         setCurrentTenant(currentRawTenantName || '', currentUserName);
       } catch (e) {
         // TODO: switch to better error display.

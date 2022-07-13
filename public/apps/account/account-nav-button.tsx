@@ -61,6 +61,7 @@ export function AccountNavButton(props: {
             setModal(null);
             window.location.reload();
           }}
+          tenant={props.tenant!}
         />
       ),
     [props.config, props.coreStart]
