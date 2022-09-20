@@ -146,7 +146,7 @@ export class SecurityPlugin implements Plugin<SecurityPluginSetup, SecurityPlugi
       const esClient = core.opensearch.client.asInternalUser;
       const migrationClient = createMigrationOpenSearchClient(esClient, this.logger);
 
-      setupIndexTemplate(esClient, opensearchDashboardsIndex, typeRegistry, this.logger);
+      // setupIndexTemplate(esClient, opensearchDashboardsIndex, typeRegistry, this.logger);
 
       const serializer: SavedObjectsSerializer = core.savedObjects.createSerializer();
       const opensearchDashboardsVersion = this.initializerContext.env.packageInfo.version;

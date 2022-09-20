@@ -19,7 +19,7 @@ import {
   Logger,
   SavedObjectsSerializer,
 } from '../../../../src/core/server';
-import { IndexMapping } from '../../../../src/core/server/saved_objects/mappings';
+import { IndexMapping, SavedObjectsTypeMappingDefinitions } from '../../../../src/core/server/saved_objects/mappings';
 import {
   buildActiveMappings,
   DocumentMigrator,
@@ -29,6 +29,10 @@ import {
 import { createIndexMap } from '../../../../src/core/server/saved_objects/migrations/core/build_index_map';
 import { mergeTypes } from '../../../../src/core/server/saved_objects/migrations/opensearch_dashboards/opensearch_dashboards_migrator';
 import { SecurityClient } from '../backend/opensearch_security_client';
+import * as Index from '../../../../src/core/server/saved_objects/migrations/core/opensearch_index';
+import { Context, disableUnknownTypeMappingFields } from '../../../../src/core/server/saved_objects/migrations/core/migration_context';
+import { MigrationLogger } from '../../../../src/core/server/saved_objects/migrations/core/migration_logger';
+import { migrateRawDocs } from '../../../../src/core/server/saved_objects/migrations/core/migrate_raw_docs';
 
 export async function setupIndexTemplate(
   esClient: OpenSearchClient,
@@ -60,7 +64,7 @@ export async function setupIndexTemplate(
         mappings,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     logger.error(error);
     throw error;
   }
@@ -77,7 +81,8 @@ export async function migrateTenantIndices(
   let tenentInfo: any;
   try {
     tenentInfo = await securityClient.getTenantInfoWithInternalUser();
-  } catch (error) {
+    console.log(JSON.stringify(tenentInfo));
+  } catch (error: any) {
     logger.error(error);
     throw error;
   }
@@ -102,30 +107,133 @@ export async function migrateTenantIndices(
     //
     // FIXME: hard code batchSize, pollInterval, and scrollDuration for now
     //        they are used to fetched from `migration.xxx` config, which is not accessible from new playform
-    const indexMigrator = new IndexMigrator({
-      batchSize: 100,
-      client: migrationClient,
-      documentMigrator,
-      index: indexName,
-      log: logger,
-      mappingProperties: indexMap[indexName].typeMappings,
-      pollInterval: 1500, // millisec
-      scrollDuration: '15m',
-      serializer,
-      obsoleteIndexTemplatePattern: undefined,
-      convertToAliasScript: indexMap[indexName].script,
-    });
+    // const indexMigrator = new IndexMigrator({
+    //   batchSize: 100,
+    //   client: migrationClient,
+    //   documentMigrator,
+    //   index: indexName,
+    //   log: logger,
+    //   mappingProperties: indexMap[indexName].typeMappings,
+    //   pollInterval: 1500, // millisec
+    //   scrollDuration: '15m',
+    //   serializer,
+    //   obsoleteIndexTemplatePattern: undefined,
+    //   convertToAliasScript: indexMap[indexName].script,
+    // });
+    // try {
+    //   await indexMigrator.migrate();
+    // } catch (error: any) {
+    //   logger.error(error);
+    //   // fail early, exit the kibana process
+    //   // NOTE: according to https://github.com/elastic/kibana/issues/41983 ,
+    //   //       PR https://github.com/elastic/kibana/pull/75819 , API to allow plugins
+    //   //       to set status will be available in 7.10, for now, we fail OpenSearchDashboards
+    //   //       process to indicate index migration error. Customer can fix their
+    //   //       tenant indices in ES then restart OpenSearchDashboards.
+    //   process.exit(1);
+    // }
+
+    // const { log, client } = opts;
+    // const alias = opts.index;
+    // const source = createSourceContext(await Index.fetchInfo(client, alias), alias);
+    // const dest = createDestContext(source, alias, opts.mappingProperties);
+
     try {
-      await indexMigrator.migrate();
-    } catch (error) {
+      const source = createSourceContext(await Index.fetchInfo(migrationClient, indexName), indexName);
+      const dest = createDestContext(await Index.fetchInfo(migrationClient, '.kibana'), '.kibana' ,indexMap[indexName].typeMappings);
+      const context: Context = {
+        client: migrationClient,
+        alias: indexName,
+        source,
+        dest,
+        documentMigrator: documentMigrator,
+        log: new MigrationLogger(logger),
+        batchSize: 100,
+        pollInterval: 2500,
+        scrollDuration: '5m',
+        serializer,
+        obsoleteIndexTemplatePattern: undefined,
+        convertToAliasScript: indexMap[indexName].script,
+      };
+      // console.log(JSON.stringify(context));
+      // console.log('-------------');
+      console.log(dest.indexName);
+      await migrateSourceToDest(context);
+      await Index.claimAlias(migrationClient, dest.indexName, '.kibana');
+    } catch (error: any) {
       logger.error(error);
-      // fail early, exit the kibana process
-      // NOTE: according to https://github.com/elastic/kibana/issues/41983 ,
-      //       PR https://github.com/elastic/kibana/pull/75819 , API to allow plugins
-      //       to set status will be available in 7.10, for now, we fail OpenSearchDashboards
-      //       process to indicate index migration error. Customer can fix their
-      //       tenant indices in ES then restart OpenSearchDashboards.
-      process.exit(1);
+      throw error;
     }
   }
+}
+
+async function migrateSourceToDest(context: Context) {
+  const { client, alias, dest, source, batchSize } = context;
+  const { scrollDuration, documentMigrator, log, serializer } = context;
+
+  if (!source.exists) {
+    return;
+  }
+
+  if (!source.aliases[alias]) {
+    log.info(`Reindexing ${alias} to ${source.indexName}`);
+
+    await Index.convertToAlias(client, source, alias, batchSize, context.convertToAliasScript);
+  }
+
+  const read = Index.reader(client, source.indexName, { batchSize, scrollDuration });
+
+  log.info(`Migrating ${source.indexName} saved objects to ${dest.indexName}`);
+
+  while (true) {
+    const docs = await read();
+
+    if (!docs || !docs.length) {
+      return;
+    }
+
+    log.debug(`Migrating saved objects ${docs.map((d) => d._id).join(', ')}`);
+
+    await Index.write(
+      client,
+      dest.indexName,
+      // @ts-expect-error @opensearch-project/opensearch _source is optional
+      await migrateRawDocs(serializer, documentMigrator.migrate, docs, log)
+    );
+  }
+}
+
+function createSourceContext(source: Index.FullIndexInfo, alias: string) {
+  if (source.exists && source.indexName === alias) {
+    return {
+      ...source,
+      indexName: nextIndexName(alias, alias),
+    };
+  }
+
+  return source;
+}
+
+function createDestContext(
+  source: Index.FullIndexInfo,
+  alias: string,
+  typeMappingDefinitions: SavedObjectsTypeMappingDefinitions
+): Index.FullIndexInfo {
+  const targetMappings = disableUnknownTypeMappingFields(
+    buildActiveMappings(typeMappingDefinitions),
+    source.mappings
+  );
+
+  return {
+    aliases: {},
+    exists: false,
+    indexName: nextIndexName(source.indexName, alias),
+    mappings: targetMappings,
+  };
+}
+
+function nextIndexName(indexName: string, alias: string) {
+  const indexSuffix = (indexName.match(/[\d]+$/) || [])[0];
+  const indexNum = parseInt(indexSuffix, 10) || 0;
+  return `${alias}_${indexNum + 1}`;
 }
