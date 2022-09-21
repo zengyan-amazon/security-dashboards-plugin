@@ -18,6 +18,8 @@ import {
   ISavedObjectTypeRegistry,
   Logger,
   SavedObjectsSerializer,
+  SavedObjectsRawDoc,
+  SavedObjectUnsanitizedDoc,
 } from '../../../../src/core/server';
 import { IndexMapping, SavedObjectsTypeMappingDefinitions } from '../../../../src/core/server/saved_objects/mappings';
 import {
@@ -31,8 +33,9 @@ import { mergeTypes } from '../../../../src/core/server/saved_objects/migrations
 import { SecurityClient } from '../backend/opensearch_security_client';
 import * as Index from '../../../../src/core/server/saved_objects/migrations/core/opensearch_index';
 import { Context, disableUnknownTypeMappingFields } from '../../../../src/core/server/saved_objects/migrations/core/migration_context';
-import { MigrationLogger } from '../../../../src/core/server/saved_objects/migrations/core/migration_logger';
-import { migrateRawDocs } from '../../../../src/core/server/saved_objects/migrations/core/migrate_raw_docs';
+import { MigrationLogger, SavedObjectsMigrationLogger } from '../../../../src/core/server/saved_objects/migrations/core/migration_logger';
+// import { migrateRawDocs } from '../../../../src/core/server/saved_objects/migrations/core/migrate_raw_docs';
+import { TransformFn } from 'src/core/server/saved_objects/migrations/core/document_migrator';
 
 export async function setupIndexTemplate(
   esClient: OpenSearchClient,
@@ -96,6 +99,7 @@ export async function migrateTenantIndices(
   });
 
   for (const indexName of Object.keys(tenentInfo)) {
+    const tenant = tenentInfo[indexName];
     const indexMap = createIndexMap({
       opensearchDashboardsIndexName: indexName,
       indexMap: mergeTypes(typeRegistry.getAllTypes()),
@@ -158,16 +162,17 @@ export async function migrateTenantIndices(
       // console.log(JSON.stringify(context));
       // console.log('-------------');
       console.log(dest.indexName);
-      await migrateSourceToDest(context);
-      await Index.claimAlias(migrationClient, dest.indexName, '.kibana');
+      await migrateSourceToDest(context, tenant);
+      // await Index.claimAlias(migrationClient, dest.indexName, '.kibana');
     } catch (error: any) {
       logger.error(error);
       throw error;
     }
+    // await Index.claimAlias(migrationClient, dest.indexName, '.kibana');
   }
 }
 
-async function migrateSourceToDest(context: Context) {
+async function migrateSourceToDest(context: Context, tenant: string) {
   const { client, alias, dest, source, batchSize } = context;
   const { scrollDuration, documentMigrator, log, serializer } = context;
 
@@ -198,7 +203,7 @@ async function migrateSourceToDest(context: Context) {
       client,
       dest.indexName,
       // @ts-expect-error @opensearch-project/opensearch _source is optional
-      await migrateRawDocs(serializer, documentMigrator.migrate, docs, log)
+      await migrateRawDocs(serializer, documentMigrator.migrate, docs, log, tenant)
     );
   }
 }
@@ -236,4 +241,53 @@ function nextIndexName(indexName: string, alias: string) {
   const indexSuffix = (indexName.match(/[\d]+$/) || [])[0];
   const indexNum = parseInt(indexSuffix, 10) || 0;
   return `${alias}_${indexNum + 1}`;
+}
+
+
+async function migrateRawDocs(
+  serializer: SavedObjectsSerializer,
+  migrateDoc: TransformFn,
+  rawDocs: SavedObjectsRawDoc[],
+  log: SavedObjectsMigrationLogger,
+  tenant: string
+): Promise<SavedObjectsRawDoc[]> {
+  const migrateDocWithoutBlocking = transformNonBlocking(migrateDoc);
+  const processedDocs = [];
+  for (const raw of rawDocs) {
+    if (serializer.isRawSavedObject(raw)) {
+      const savedObject = serializer.rawToSavedObject(raw);
+      savedObject.migrationVersion = savedObject.migrationVersion || {};
+      processedDocs.push(
+        serializer.savedObjectToRaw({
+          references: [],
+          ...(await migrateDocWithoutBlocking(savedObject)),
+        })
+      );
+    } else {
+      log.error(
+        `Error: Unable to migrate the corrupt Saved Object document ${raw._id}. To prevent OpenSearch Dashboards from performing a migration on every restart, please delete or fix this document by ensuring that the namespace and type in the document's id matches the values in the namespace and type fields.`,
+        { rawDocument: raw }
+      );
+      processedDocs.push(raw);
+    }
+    raw._source.namespace = tenant;
+  }
+  return processedDocs;
+}
+
+function transformNonBlocking(
+  transform: TransformFn
+): (doc: SavedObjectUnsanitizedDoc) => Promise<SavedObjectUnsanitizedDoc> {
+  // promises aren't enough to unblock the event loop
+  return (doc: SavedObjectUnsanitizedDoc) =>
+    new Promise((resolve, reject) => {
+      // set immediate is though
+      setImmediate(() => {
+        try {
+          resolve(transform(doc));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
 }
