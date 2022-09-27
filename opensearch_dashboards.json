@@ -3,7 +3,7 @@
   "version": "securityDashboards",
   "opensearchDashboardsVersion": "2.0.0",
   "configPath": ["opensearch_security"],
-  "requiredPlugins": ["navigation"],
+  "requiredPlugins": ["navigation", "savedObjectsManagement"],
   "server": true,
   "ui": true
 }

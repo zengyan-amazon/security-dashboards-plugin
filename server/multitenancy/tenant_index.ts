@@ -144,6 +144,7 @@ export async function migrateTenantIndices(
 
     try {
       const source = createSourceContext(await Index.fetchInfo(migrationClient, indexName), indexName);
+      
       const dest = createDestContext(await Index.fetchInfo(migrationClient, '.kibana'), '.kibana' ,indexMap[indexName].typeMappings);
       const context: Context = {
         client: migrationClient,
@@ -162,8 +163,9 @@ export async function migrateTenantIndices(
       // console.log(JSON.stringify(context));
       // console.log('-------------');
       console.log(dest.indexName);
-      await migrateSourceToDest(context, tenant);
+      // await migrateSourceToDest(context, tenant);
       // await Index.claimAlias(migrationClient, dest.indexName, '.kibana');
+      // TODO: remove tenant index alias to prevent future migration.
     } catch (error: any) {
       logger.error(error);
       throw error;

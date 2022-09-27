@@ -150,14 +150,14 @@ export class SecurityPlugin implements Plugin<SecurityPluginSetup, SecurityPlugi
 
       const serializer: SavedObjectsSerializer = core.savedObjects.createSerializer();
       const opensearchDashboardsVersion = this.initializerContext.env.packageInfo.version;
-      migrateTenantIndices(
-        opensearchDashboardsVersion,
-        migrationClient,
-        this.securityClient,
-        typeRegistry,
-        serializer,
-        this.logger
-      );
+      // migrateTenantIndices(
+      //   opensearchDashboardsVersion,
+      //   migrationClient,
+      //   this.securityClient,
+      //   typeRegistry,
+      //   serializer,
+      //   this.logger
+      // );
     }
 
     return {
